@@ -1,5 +1,97 @@
 @import "tailwindcss";
 
+@theme inline {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  /* Shared timing for every smart-animate style transition. Adjust to match Figma. */
+  --dur: 450ms;
+  --dur-long: 650ms;
+  /* Circle that opens the hover background on World. */
+  --dur-circle: 900ms;
+  --ease: cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+html,
 body {
   margin: 0;
+  background: #fff;
+  color: #000;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-sans);
+}
+
+/* Page content fades in after the shared elements have started moving. */
+@keyframes page-in {
+  from {
+    opacity: 0;
+  }
+}
+.page {
+  animation: page-in 300ms ease 150ms backwards;
+}
+.page a,
+.page button {
+  pointer-events: auto;
+}
+
+/* "yu" steps while the camera is panning on Projects. */
+@keyframes walk {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  25% {
+    transform: translateY(-5px) rotate(-1deg);
+  }
+  75% {
+    transform: translateY(-5px) rotate(1deg);
+  }
+}
+[data-walking="1"] .yu-walk {
+  animation: walk 1200ms ease-in-out infinite;
+  transform-origin: 50% 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-walking="1"] .yu-walk {
+    animation: none;
+  }
+  :root {
+    --dur: 1ms;
+    --dur-long: 1ms;
+    --dur-circle: 1ms;
+  }
+  .page {
+    animation: none;
+  }
+}
+
+/* The "?" card gets a steady gray glow when hovered or focused. */
+.card-glow:enabled:hover,
+.card-glow:enabled:focus-visible {
+  box-shadow: 0 0 40px 12px rgba(110, 110, 110, 0.55);
+}
+
+/* Blend handoff: the moving artwork hands over to the multiplied copy once it has landed. */
+@keyframes handoff {
+  0%,
+  90% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.handoff {
+  animation: handoff 460ms linear forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .handoff {
+    animation: none;
+  }
 }

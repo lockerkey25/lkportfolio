@@ -19,6 +19,9 @@ body {
   background: #fff;
   color: #000;
   overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -94,4 +97,10 @@ body {
   .handoff {
     animation: none;
   }
+}
+
+/* Page content ships a landscape and a portrait version; the Shell sets data-layout. */
+[data-layout="portrait"] .landscape-only,
+[data-layout="landscape"] .portrait-only {
+  display: none;
 }

@@ -45,7 +45,7 @@ const lifted = (b: Box): Box => ({ ...b, y: b.y - 520 });
 
 export type ArtId = "gift" | "eye" | "mp3";
 
-type Detail = {
+export type Detail = {
   /** Where the artwork sits on screen while hovered (Desktop 5 / 7 / 8). */
   art: Box;
   bg: { src: string; x: number; y: number; w: number; h: number };
@@ -56,7 +56,7 @@ type Detail = {
   blend?: boolean;
 };
 
-type Art = {
+export type Art = {
   id: ArtId;
   /** Figma layer name shared by Desktop 1, 2, 3 and 10. */
   name: string;
@@ -186,3 +186,150 @@ export const DOT: Record<SceneKey, { x: number; y: number; s: number; href: stri
   projects: { x: 89, y: 81, s: 77, href: "/world", label: "Back to the world gallery" },
   mystery: { x: 89, y: 81, s: 77, href: "/world", label: "Back to the world gallery" },
 };
+
+/* ------------------------------------------------------------------------------------------
+ * Responsive layout
+ *
+ * The stage is always `H` design units tall and `W` units wide, and is scaled to fill the
+ * window exactly, so nothing is ever cut off in the middle of the screen.
+ *
+ * - Landscape: the 1440x1024 Figma frame is centred (ox, oy) in a stage that is at least that big.
+ *   Things that hang from the top or sit on the bottom edge are re-anchored to the screen edge.
+ * - Portrait (phones, tablets held upright): the stage is 1024 units tall and about 470 to 770
+ *   wide. Home, About, Doodles and Space use dedicated layouts; World and Projects keep the
+ *   desktop scene and show a window of it that pans.
+ * ---------------------------------------------------------------------------------------- */
+
+export type Layout = {
+  portrait: boolean;
+  /** Stage size in design units. */
+  W: number;
+  H: number;
+  /** Offset of the 1440x1024 frame inside the stage (always 0 in portrait). */
+  ox: number;
+  oy: number;
+};
+
+export const DEFAULT_LAYOUT: Layout = { portrait: false, W: FRAME_W, H: FRAME_H, ox: 0, oy: 0 };
+
+/** Aspect ratios below this use the portrait layout. */
+export const PORTRAIT_BELOW = 1.05;
+
+export function layoutFor(vw: number, vh: number): Layout & { scale: number } {
+  const portrait = vw / vh < PORTRAIT_BELOW;
+  const scale = portrait ? vh / FRAME_H : Math.min(vw / FRAME_W, vh / FRAME_H);
+  const W = vw / scale;
+  const H = vh / scale;
+  return {
+    portrait,
+    scale,
+    W,
+    H,
+    ox: portrait ? 0 : (W - FRAME_W) / 2,
+    oy: portrait ? 0 : (H - FRAME_H) / 2,
+  };
+}
+
+/** Scenes whose artworks hang from the top edge of the screen. */
+export const hangsFromTop = (s: SceneKey) => s === "home" || s === "about" || s === "doodles";
+
+const ART_INDEX: Record<ArtId, number> = { gift: 0, eye: 1, mp3: 2 };
+
+function portraitTop(id: ArtId, scene: "home" | "about", l: Layout): Box {
+  const i = ART_INDEX[id];
+  if (scene === "home") {
+    const w = Math.min(190, l.W * 0.36);
+    const h = w * 0.732;
+    return {
+      x: [l.W * 0.02, l.W / 2 - w / 2, l.W * 0.98 - w][i],
+      y: [-50, -65, -45][i],
+      w,
+      h,
+      r: [6.37, -4.45, 11.29][i],
+      o: 1,
+    };
+  }
+  const w = 190;
+  const h = 139;
+  const base = l.W / 2 - w / 2 + 40;
+  return {
+    x: [base - 30, base + 10, base - 10][i],
+    y: [10, -10, -30][i],
+    w,
+    h,
+    r: [9.63, 5.2, -4.45][i],
+    o: 1,
+  };
+}
+
+export function artBox(a: Art, scene: SceneKey, l: Layout): Box {
+  if (l.portrait) {
+    if (scene === "home" || scene === "about") return portraitTop(a.id, scene, l);
+    if (scene === "doodles") return lifted(portraitTop(a.id, "home", l));
+  }
+  return a.frames[scene];
+}
+
+export function yuBox(scene: SceneKey, l: Layout): Box {
+  if (!l.portrait) return YU[scene];
+  if (scene === "home") return { x: 8, y: FRAME_H - 333, w: 260, h: 333, r: 0, o: 1 };
+  if (scene === "world") return { x: 8, y: FRAME_H - 298 + 16, w: 233, h: 298, r: 0, o: 1 };
+  return { x: 8, y: FRAME_H - 298, w: 233, h: 298, r: 0, o: 0 };
+}
+
+export function dotFor(scene: SceneKey, l: Layout) {
+  const d = DOT[scene];
+  if (!l.portrait) return d;
+  return scene === "home"
+    ? { ...d, x: 24, y: 216, s: 56 }
+    : { ...d, x: 20, y: 20, s: 56 };
+}
+
+/** The "?" card; in the space scene it covers the whole screen. */
+export function cardBox(scene: SceneKey, l: Layout): Box {
+  if (scene !== "mystery") return CARD[scene];
+  const x0 = -l.ox - 30;
+  const y0 = -l.oy - 30;
+  const vw = l.W + 60;
+  const vh = l.H + 60;
+  const cx = x0 + vw / 2;
+  const cy = y0 + vh / 2;
+  // The card is rotated -90deg, so its unrotated box is the visual box turned on its side.
+  return { x: cx - vh / 2, y: cy - vw / 2, w: vh, h: vw, r: -90, o: 1 };
+}
+
+export type DetailLayout = Detail & {
+  /** Background fills the whole stage (object-fit: cover). */
+  cover: boolean;
+  fontSize: number;
+};
+
+export function detailFor(a: Art, l: Layout): DetailLayout {
+  const cover = a.id === "gift";
+  const bg = cover ? { ...a.detail.bg, x: -l.ox, y: -l.oy, w: l.W, h: l.H } : a.detail.bg;
+  if (!l.portrait) return { ...a.detail, bg, cover, fontSize: 64 };
+
+  const cx = l.W / 2;
+  const k = Math.min(1, (l.W * 0.7) / a.detail.art.w);
+  const aw = a.detail.art.w * k;
+  const ah = a.detail.art.h * k;
+  const cy = { gift: 330, eye: 420, mp3: 330 }[a.id];
+  const art: Box = { x: cx - aw / 2, y: cy - ah / 2, w: aw, h: ah, r: a.detail.art.r, o: 1 };
+
+  let pbg = bg;
+  if (a.id === "eye") {
+    const h = (l.W * 834) / 1272;
+    pbg = { ...bg, x: 0, y: 520 - h / 2, w: l.W, h };
+  } else if (a.id === "mp3") {
+    const w = Math.min(l.W, 520);
+    pbg = { ...bg, x: (l.W - w) / 2, y: 60, w, h: (w * 853) / 743 };
+  }
+  return {
+    ...a.detail,
+    cover,
+    fontSize: 44,
+    art,
+    bg: pbg,
+    text: { ...a.detail.text, box: { x: 24, y: 700, w: l.W - 48, h: 300, r: 0, o: 1 } },
+  };
+}

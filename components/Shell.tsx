@@ -41,6 +41,21 @@ const FAR_Y = 0.9;
 /** On narrow screens Projects also pans sideways so every vine and box can be reached. */
 const VINES_CENTER_X = 705;
 const MAX_CAM_X_PROJECTS = 700;
+/**
+ * Mouse parallax on World. The pointer position (-1..1) moves each layer by
+ * amount x depth, in design units. Negative depth moves against the pointer (far away),
+ * larger positive values are nearer. Only mouse pointers drive it.
+ */
+const POINTER_X = 16;
+const POINTER_Y = 10;
+const POINTER_EASE = 0.1;
+const POINTER_DEPTH = {
+  far: -0.8,
+  text: 0.3,
+  card: 1.8,
+  yu: 2.2,
+  art: { gift: 0.6, eye: 1, mp3: 1.4 } as Record<ArtId, number>,
+};
 const WHEEL_SPEED = 1.6;
 const CAM_EASE = 0.28;
 /** Pointer travel (px) before a press counts as a drag instead of a tap. */
@@ -92,10 +107,12 @@ export function Shell({ children }: { children: ReactNode }) {
   // Camera position when the "?" card was clicked: the space opens in place, no scroll reset.
   const [holdCam, setHoldCam] = useState(0);
 
+  const rootRef = useRef<HTMLDivElement>(null);
   const farRef = useRef<HTMLDivElement>(null);
   const midRef = useRef<HTMLDivElement>(null);
   const nearRef = useRef<HTMLDivElement>(null);
-  const cam = useRef({ x: 0, y: 0, tx: 0, ty: 0 });
+  // x, y: camera. tx, ty: camera target. px, py: eased pointer. rx, ry: raw pointer (-1..1).
+  const cam = useRef({ x: 0, y: 0, tx: 0, ty: 0, px: 0, py: 0, rx: 0, ry: 0 });
   const live = useRef({ scene, hover, scale: 1, lay: DEFAULT_LAYOUT as Layout });
   const dragMoved = useRef(false);
   const openedAt = useRef(0);
@@ -119,18 +136,21 @@ export function Shell({ children }: { children: ReactNode }) {
 
   // Fill the window exactly, whatever its shape.
   useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    // Measure the element that is actually painted (100dvh follows the mobile browser bars),
+    // so the scale and the visible area can never disagree.
     const measure = () => {
-      const m = layoutFor(window.innerWidth, window.innerHeight);
+      const { width, height } = root.getBoundingClientRect();
+      if (!width || !height) return;
+      const m = layoutFor(width, height);
       live.current.scale = m.scale;
       setMetrics(m);
     };
     measure();
-    window.addEventListener("resize", measure);
-    window.addEventListener("orientationchange", measure);
-    return () => {
-      window.removeEventListener("resize", measure);
-      window.removeEventListener("orientationchange", measure);
-    };
+    const ro = new ResizeObserver(measure);
+    ro.observe(root);
+    return () => ro.disconnect();
   }, []);
 
   // Camera: World pans sideways, Projects scrolls up the tree.
@@ -139,18 +159,27 @@ export function Shell({ children }: { children: ReactNode }) {
     let raf = 0;
 
     const write = (walking: boolean) => {
-      const { x, y } = cam.current;
-      if (farRef.current) farRef.current.style.transform = `translate3d(${-x * FAR}px,${y * FAR_Y}px,0)`;
+      const { x, y, px, py } = cam.current;
+      const ptr = (depth: number) => `${px * POINTER_X * depth}px,${py * POINTER_Y * depth}px`;
+      const pxo = (depth: number) => px * POINTER_X * depth;
+      const pyo = (depth: number) => py * POINTER_Y * depth;
+      if (farRef.current) {
+        farRef.current.style.transform = `translate3d(${-x * FAR + pxo(POINTER_DEPTH.far)}px,${y * FAR_Y + pyo(POINTER_DEPTH.far)}px,0)`;
+      }
       if (midRef.current) {
         midRef.current.style.transform = `translate3d(${-x}px,${y}px,0)`;
-        // Per-item depth: extra offset relative to the mid layer.
+        // Per-item depth: extra offset relative to the mid layer, plus the pointer offset.
         midRef.current.querySelectorAll<HTMLElement>("[data-depth]").forEach((el) => {
           const d = Number(el.dataset.depth) - 1;
-          el.style.transform = `translate3d(${-x * d}px,${y * d * DEPTH_Y}px,0)`;
+          const pd = Number(el.dataset.pdepth ?? 0);
+          el.style.transform = `translate3d(${-x * d + pxo(pd)}px,${y * d * DEPTH_Y + pyo(pd)}px,0)`;
         });
       }
       // "yu" is pinned to the screen; she only walks in place while the camera moves.
-      if (nearRef.current) nearRef.current.dataset.walking = walking ? "1" : "0";
+      if (nearRef.current) {
+        nearRef.current.style.transform = `translate3d(${ptr(POINTER_DEPTH.yu)},0)`;
+        nearRef.current.dataset.walking = walking ? "1" : "0";
+      }
     };
 
     const step = () => {
@@ -162,8 +191,19 @@ export function Shell({ children }: { children: ReactNode }) {
       if (Math.abs(c.tx - c.x) < 0.05) c.x = c.tx;
       if (Math.abs(c.ty - c.y) < 0.05) c.y = c.ty;
       const moving = c.x !== c.tx || c.y !== c.ty;
+
+      // Mouse parallax: World only, and not while a detail is open or motion is reduced.
+      const on = !reduced.matches && live.current.scene === "world" && !live.current.hover;
+      const gx = on ? c.rx : 0;
+      const gy = on ? c.ry : 0;
+      c.px += (gx - c.px) * POINTER_EASE;
+      c.py += (gy - c.py) * POINTER_EASE;
+      if (Math.abs(gx - c.px) < 0.001) c.px = gx;
+      if (Math.abs(gy - c.py) < 0.001) c.py = gy;
+      const pointerMoving = c.px !== gx || c.py !== gy;
+
       write(moving);
-      if (moving) raf = requestAnimationFrame(step);
+      if (moving || pointerMoving) raf = requestAnimationFrame(step);
     };
     kick.current = () => {
       if (!raf) raf = requestAnimationFrame(step);
@@ -218,8 +258,15 @@ export function Shell({ children }: { children: ReactNode }) {
     const onUp = () => {
       drag = null;
     };
+    const onPointer = (e: PointerEvent) => {
+      if (e.pointerType !== "mouse") return;
+      cam.current.rx = (e.clientX / window.innerWidth) * 2 - 1;
+      cam.current.ry = (e.clientY / window.innerHeight) * 2 - 1;
+      if (live.current.scene === "world") kick.current();
+    };
 
     window.addEventListener("wheel", onWheel, { passive: false });
+    window.addEventListener("pointermove", onPointer);
     window.addEventListener("keydown", onKey);
     window.addEventListener("pointerdown", onDown);
     window.addEventListener("pointermove", onMove);
@@ -228,6 +275,7 @@ export function Shell({ children }: { children: ReactNode }) {
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("wheel", onWheel);
+      window.removeEventListener("pointermove", onPointer);
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("pointerdown", onDown);
       window.removeEventListener("pointermove", onMove);
@@ -273,7 +321,8 @@ export function Shell({ children }: { children: ReactNode }) {
 
   return (
     <div
-      className="fixed inset-0 touch-none overflow-hidden bg-white select-none"
+      ref={rootRef}
+      className="fixed top-0 left-0 h-dvh w-full touch-none overflow-hidden bg-white select-none"
       data-layout={lay.portrait ? "portrait" : "landscape"}
       style={{ ["--stage-w" as string]: `${lay.W}px` }}
     >
@@ -406,7 +455,7 @@ export function Shell({ children }: { children: ReactNode }) {
           {/* MID: artworks, page content */}
           <div ref={midRef} className="pointer-events-none absolute inset-0">
             {/* The "?" card: glows on hover, grows into the gray space of Desktop 9 on click */}
-            <div data-depth={CARD_DEPTH} className="pointer-events-none absolute inset-0">
+            <div data-depth={CARD_DEPTH} data-pdepth={POINTER_DEPTH.card} className="pointer-events-none absolute inset-0">
               <button
                 type="button"
                 aria-label="Open the mystery space"
@@ -448,7 +497,12 @@ export function Shell({ children }: { children: ReactNode }) {
               }
               const photo = wide || isHover;
               return (
-                <div key={a.id} data-depth={ART_DEPTH[a.id]} className="pointer-events-none absolute inset-0">
+                <div
+                  key={a.id}
+                  data-depth={ART_DEPTH[a.id]}
+                  data-pdepth={POINTER_DEPTH.art[a.id]}
+                  className="pointer-events-none absolute inset-0"
+                >
                   <div
                     data-name={a.name}
                     style={boxStyle(
@@ -497,7 +551,7 @@ export function Shell({ children }: { children: ReactNode }) {
                     aria-label="Open the world gallery"
                     onPointerEnter={(e) => e.pointerType === "mouse" && homePeekStart(a.id)}
                     onPointerLeave={(e) => e.pointerType === "mouse" && homePeekEnd()}
-                    onFocus={() => homePeekStart(a.id)}
+                    onFocus={(e) => e.currentTarget.matches(":focus-visible") && homePeekStart(a.id)}
                     onBlur={homePeekEnd}
                     onClick={() => router.push("/world")}
                     className="pointer-events-auto absolute m-0 cursor-pointer border-0 bg-transparent p-0 focus-visible:outline-2 focus-visible:outline-black"
@@ -518,7 +572,12 @@ export function Shell({ children }: { children: ReactNode }) {
               ARTWORKS.map((a) => {
                 const f = a.frames.world;
                 return (
-                  <div key={a.id} data-depth={ART_DEPTH[a.id]} className="pointer-events-none absolute inset-0">
+                  <div
+                    key={a.id}
+                    data-depth={ART_DEPTH[a.id]}
+                    data-pdepth={POINTER_DEPTH.art[a.id]}
+                    className="pointer-events-none absolute inset-0"
+                  >
                     <div
                       tabIndex={0}
                       role="button"
@@ -528,7 +587,7 @@ export function Shell({ children }: { children: ReactNode }) {
                       onPointerUp={(e) => {
                         if (e.pointerType !== "mouse" && !dragMoved.current) startHover(a.id, "touch", e.timeStamp);
                       }}
-                      onFocus={(e) => startHover(a.id, "mouse", e.timeStamp)}
+                      onFocus={(e) => e.currentTarget.matches(":focus-visible") && startHover(a.id, "mouse", e.timeStamp)}
                       onBlur={endHover}
                       className="pointer-events-auto absolute outline-offset-4 focus-visible:outline-2 focus-visible:outline-black"
                       style={{
@@ -547,6 +606,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <div
               key={pathname}
               data-depth={scene === "world" ? WORLD_TEXT_DEPTH : 1}
+              data-pdepth={scene === "world" ? POINTER_DEPTH.text : 0}
               className="page pointer-events-none absolute inset-0"
               style={{ ...dim, left: scene === "mystery" ? holdCam : 0 }}
             >

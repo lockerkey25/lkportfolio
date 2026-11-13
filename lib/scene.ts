@@ -304,32 +304,41 @@ export type DetailLayout = Detail & {
   fontSize: number;
 };
 
+/**
+ * Portrait detail frames reuse the Figma geometry of Desktop 5 / 7 / 8, so the artwork lands on
+ * the background exactly as designed. Each detail is cropped to the region that matters (the
+ * artwork, its background and the title), scaled by one factor and centred on the screen.
+ */
+const FOCUS: Record<ArtId, { x0: number; x1: number; y0: number; y1: number }> = {
+  gift: { x0: 100, x1: 960, y0: 200, y1: 700 },
+  eye: { x0: 250, x1: 910, y0: 120, y1: 640 },
+  mp3: { x0: 600, x1: 1390, y0: 100, y1: 1110 },
+};
+
 export function detailFor(a: Art, l: Layout): DetailLayout {
-  const cover = a.id === "gift";
-  const bg = cover ? { ...a.detail.bg, x: -l.ox, y: -l.oy, w: l.W, h: l.H } : a.detail.bg;
-  if (!l.portrait) return { ...a.detail, bg, cover, fontSize: 64 };
-
-  const cx = l.W / 2;
-  const k = Math.min(1, (l.W * 0.7) / a.detail.art.w);
-  const aw = a.detail.art.w * k;
-  const ah = a.detail.art.h * k;
-  const cy = { gift: 330, eye: 420, mp3: 330 }[a.id];
-  const art: Box = { x: cx - aw / 2, y: cy - ah / 2, w: aw, h: ah, r: a.detail.art.r, o: 1 };
-
-  let pbg = bg;
-  if (a.id === "eye") {
-    const h = (l.W * 834) / 1272;
-    pbg = { ...bg, x: 0, y: 520 - h / 2, w: l.W, h };
-  } else if (a.id === "mp3") {
-    const w = Math.min(l.W, 520);
-    pbg = { ...bg, x: (l.W - w) / 2, y: 60, w, h: (w * 853) / 743 };
+  const cover = a.id === "gift" && !l.portrait;
+  if (!l.portrait) {
+    const bg = cover ? { ...a.detail.bg, x: -l.ox, y: -l.oy, w: l.W, h: l.H } : a.detail.bg;
+    return { ...a.detail, bg, cover, fontSize: 64 };
   }
+
+  const f = FOCUS[a.id];
+  const k = Math.min(1, (l.W - 24) / (f.x1 - f.x0), (l.H - 120) / (f.y1 - f.y0));
+  const cx = (f.x0 + f.x1) / 2;
+  const cy = (f.y0 + f.y1) / 2;
+  const tx = (x: number) => (x - cx) * k + l.W / 2;
+  // The gift background is a full-bleed drawing that runs off the bottom of the screen
+  // (Desktop 5), so it is pinned to the bottom edge instead of being centred.
+  const ty = (y: number) => (a.id === "gift" ? (y - FRAME_H) * k + l.H : (y - cy) * k + l.H / 2);
+  const box = (b: Box): Box => ({ ...b, x: tx(b.x), y: ty(b.y), w: b.w * k, h: b.h * k });
+  const { bg, text } = a.detail;
+
   return {
     ...a.detail,
-    cover,
-    fontSize: 44,
-    art,
-    bg: pbg,
-    text: { ...a.detail.text, box: { x: 24, y: 700, w: l.W - 48, h: 300, r: 0, o: 1 } },
+    cover: false,
+    fontSize: 64 * k,
+    art: box(a.detail.art),
+    bg: { ...bg, x: tx(bg.x), y: ty(bg.y), w: bg.w * k, h: bg.h * k },
+    text: { ...text, box: box(text.box) },
   };
 }
